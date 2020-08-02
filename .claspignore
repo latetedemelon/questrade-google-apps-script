@@ -1,4 +1,3 @@
-**/**
 !src/*.ts
 !src/appsscript.json
 !src/*.html

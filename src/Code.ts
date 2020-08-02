@@ -2,30 +2,20 @@ function reset() {
     const service = getService();
     service.reset();
 }
+
 function getService() {
     // @ts-ignore
     return OAuth2.createService('questrade')
         .setAuthorizationBaseUrl('https://login.questrade.com/oauth2/authorize')
         .setTokenUrl('https://login.questrade.com/oauth2/token')
-
-        // Set the client ID.
         .setClientId(PropertiesService.getScriptProperties().getProperty('consumerKey'))
-
-        // No secret provided by QT. Use dummy one to make oauth2 lib happy.
-        .setClientSecret('secret')
-
-        // Set the name of the callback function in the script referenced
-        // above that should be invoked to complete the OAuth flow.
+        .setClientSecret('secret') // No secret provided by QT. Use dummy one to make oauth2 lib happy.
         .setCallbackFunction('authCallback')
-
-        // Set the property store where authorized tokens should be persisted.
         .setPropertyStore(PropertiesService.getUserProperties())
-
-        // Set the scopes to request.
         .setScope('read_acc')
-
         .setParam('response_type', 'code');
 }
+
 function authCallback(request) {
     const service = getService();
     const authorized = service.handleCallback(request);
@@ -35,14 +25,16 @@ function authCallback(request) {
         return HtmlService.createHtmlOutput('Denied.');
     }
 }
+
 function logRedirectUri() {
     // @ts-ignore
     console.log(OAuth2.getRedirectUri());
 }
-var QuestradeApiSession = function () {
-    this.service = getService();
-    if (!this.service.hasAccess()) {
-        const authorizationUrl = this.service.getAuthorizationUrl();
+
+const QuestradeApiSession = function () {
+    const service = getService();
+    if (!service.hasAccess()) {
+        const authorizationUrl = service.getAuthorizationUrl();
         const template: GoogleAppsScript.HTML.HtmlTemplate = HtmlService.createTemplate(
             '<a href="<?= authorizationUrl ?>" target="_blank">Authorize</a>. ' +
             'Pull again when the authorization is complete.');
@@ -52,167 +44,135 @@ var QuestradeApiSession = function () {
         SpreadsheetApp.getUi().showSidebar(page);
         return;
     }
-    this.authHeader = {
-        'Authorization': 'Bearer ' + this.service.getAccessToken()
-    };
-    this.apiServer = this.service.getToken().api_server;
-    const options: GoogleAppsScript.URL_Fetch.URLFetchRequestOptions = {
+
+    const apiOptions: GoogleAppsScript.URL_Fetch.URLFetchRequestOptions = {
         'method': 'get',
-        'headers': this.authHeader
+        'headers': {
+            'Authorization': 'Bearer ' + service.getAccessToken()
+        }
     };
-    const url = this.apiServer + 'v1/accounts';
-    const accountsData = JSON.parse(UrlFetchApp.fetch(url, options).getContentText());
-    this.accounts = accountsData.accounts;
+    const apiUrl = service.getToken().api_server;
 
-    this.getPositions = function () {
-        const options: GoogleAppsScript.URL_Fetch.URLFetchRequestOptions = {
-            'method': 'get',
-            'headers': this.authHeader
-        };
-        let table = {
-            rows: [],
-            namedRanges: [],
-        };
-        const sheetName = "Positions";
-        this.accounts.forEach(account => {
-            const url = this.apiServer + 'v1/accounts/' + account.number + '/positions';
-            table = writeJsonToTable(JSON.parse(UrlFetchApp.fetch(url, options).getContentText())['positions'], sheetName, table, account);
-        });
-        writeTableToSheet(sheetName, table);
-        writeNamedRangesToDocument(table);
+    const fetch = function(query) {
+        return JSON.parse(UrlFetchApp.fetch(apiUrl + query, apiOptions).getContentText());
     }
 
-    this.getBalances = function (method) {
-        const options: GoogleAppsScript.URL_Fetch.URLFetchRequestOptions = {
-            'method': 'get',
-            'headers': this.authHeader
-        };
-        let table = {
-            rows: [],
-            namedRanges: [],
-        };
-        const sheetName = method;
-        this.accounts.forEach(account => {
-            const url = this.apiServer + 'v1/accounts/' + account.number + '/balances';
-            table = writeJsonToTable(JSON.parse(UrlFetchApp.fetch(url, options).getContentText())[method], sheetName, table, account);
-        });
-        writeTableToSheet(sheetName, table);
-        writeNamedRangesToDocument(table);
-    }
-}
+    const getAccounts = this.getAccounts = function() {
+        return fetch('v1/accounts').accounts;
+    };
+    this.accounts = this.getAccounts();
 
-function objectValues(obj) {
-    const keys = Object.keys(obj);
-    return keys.map(key => obj[key]);
-}
+    const getPositions = this.getPositions = function(accountNumber) {
+        return fetch('v1/accounts/' + accountNumber + '/positions').positions;
+    };
 
-function writeJsonToTable(json, sheetName, table, account) {
-    const doc = SpreadsheetApp.getActiveSpreadsheet();
-    let sheet = doc.getSheetByName(sheetName);
+    const getSymbols = this.getSymbols = function(symbolIds) {
+        return fetch('v1/symbols?ids=' + symbolIds.join(',')).symbols;
+    };
 
-    if (sheet == null) {
-        sheet = doc.insertSheet(sheetName);
+    const getBalances = this.getBalances = function(accountNumber) {
+        return fetch('v1/accounts/' + accountNumber + '/balances').perCurrencyBalances;
     }
 
-    if (json === undefined || json.length == 0) {
-        return table;
-    }
+    const getExchangeRates = (base) => {
+        return JSON.parse(UrlFetchApp.fetch(`https://api.exchangeratesapi.io/latest?base=${base}`).getContentText()).rates;
+    };
 
-    const entries = json.sort();
-
-    // Get account row
-    table.rows.push(objectValues(account));
-
-    // Header for one object should be the same for all
-    const header = Object.keys(entries[0]);
-    table.rows.push(header);
-
-    // Get values of all entries in a 2D array
-    entries.forEach(entry => table.rows.push(objectValues(entry)));
-
-    // Insert empty row for spacing
-    table.rows.push([]);
-
-    const lastNamedRange = table.namedRanges[table.namedRanges.length - 1];
-    let startRow = 3;
-    let startCol = 1;
-    const numRows = entries.length;
-    const numCols = header.length;
-    if (lastNamedRange !== undefined && table.namedRanges.length > 0) {
-        // If a previous named range exists, start range at next section (new account)
-        startRow = startRow + lastNamedRange.startRow + lastNamedRange.numRows;
-    }
-
-    table.namedRanges.push({
-        name: account.type + "_" + account.number + "_" + sheetName,
-        startRow,
-        numRows,
-        range: sheet.getRange(startRow, startCol, numRows, numCols),
-    });
-
-    return table;
-}
-
-function writeTableToSheet(sheetName, table) {
-    const doc = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = doc.getSheetByName(sheetName);
-
-    sheet.clear();
-
-    let maxColumnLength = 0;
-    table.rows.forEach(row => {
-        if (row.length > maxColumnLength) {
-            maxColumnLength = row.length;
+    const prefixKeys = (map, prefix) => {
+        if (map) {
+            return Object.entries(map).reduce((m, [k,v]) => { m[prefix + k] = v; return m; }, {});
         }
-    });
+    };
 
-    // Normalize all rows so they are the same length (required by setValues)
-    table.rows.forEach(row => {
-        const difference = maxColumnLength - row.length;
-        if (difference > 0) {
-            let i;
-            for (i = 0; i < difference; i++) {
-                row.push("");
+    const getEnrichedPositions = this.getEnrichedPositions = function() {
+        const positions = getAccounts().flatMap(ac => {
+            const ac2 = prefixKeys(ac, 'account.');
+            const acPositions = getPositions(ac.number).map(pos => ({
+                ...pos, ...ac2
+            }));
+
+            getBalances(ac.number).forEach(bal => {
+                acPositions.push({
+                    symbol: '$' + bal.currency,
+                    symbolId: '$' + bal.currency,
+                    currentMarketValue: bal.cash,
+                    ...ac2
+                })
+            });
+
+            return acPositions;
+        });
+
+        const rates = getExchangeRates('CAD');
+        const getValueInCAD = (value, currency) => value / rates[currency];
+
+        const symbols = [ ...getSymbols(positions.map(pos => pos.symbolId).filter(id => Number.isInteger(id))),
+            { symbolId: '$CAD', currency: 'CAD' }, { symbolId: '$USD', currency: 'USD' } ];
+
+        return positions.map(pos => {
+            const symbol = symbols.find(s => s.symbolId == pos.symbolId);
+            const exchangeRate = 1.0 / rates[symbol.currency];
+            const valueInCAD = pos.currentMarketValue * exchangeRate;
+            return { 
+                ...pos,
+                ...prefixKeys(symbol, 'symbol.'),
+                exchangeRate: exchangeRate,
+                valueInCAD: valueInCAD,
+                currency: symbol.currency
+            };
+        });
+    };
+}
+
+function updatePositions() {
+    const qt = new QuestradeApiSession();
+    const positions = qt.getEnrichedPositions();
+    // console.log('positions', positions);
+
+    const doc = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = doc.getSheetByName('Positions');
+    const values = sheet.getDataRange().getValues();
+    var lastRowIndex = values.length;
+
+    const headerRow = values[0];
+    const numHeaderRows = 2; // header + totals
+    const columnMap = headerRow.reduce((map, val, index) => {
+        // @ts-ignore
+        map[val] = index;
+        return map;
+    }, {});
+
+    const accountNumCol = columnMap['account.number'];
+    const symbolIdCol = columnMap['symbolId'];
+    const updatedRowIndicies = new Set();
+
+    positions.forEach(pos => {
+        var rowIndex = values.findIndex(row => row[accountNumCol] == pos['account.number'] && row[symbolIdCol] == pos.symbolId);
+        if (rowIndex < 0) {
+            rowIndex = lastRowIndex ++;
+        }
+        updatedRowIndicies.add(rowIndex);
+
+        headerRow.forEach((key, colIndex) => {
+            // @ts-ignore
+            const value = pos[key];
+            if (value) {
+                sheet.getRange(rowIndex+1, colIndex+1).setValue(value);
             }
-        }
+        });
     });
 
-    // Write table to sheet
-    const range = sheet.getRange(1, 1, table.rows.length, maxColumnLength);
-    range.setValues(table.rows);
+    const expiredCol = columnMap['expired'];
+    values.forEach((row, rowIndex) => {
+        if (rowIndex >= numHeaderRows) {
+            sheet.getRange(rowIndex+1, expiredCol+1).setValue(updatedRowIndicies.has(rowIndex) ? null : 'EXPIRED');
+        }
+    });
 }
-
-function writeNamedRangesToDocument(table) {
-    const doc = SpreadsheetApp.getActiveSpreadsheet();
-
-    table.namedRanges.forEach(namedRange =>
-        doc.setNamedRange(namedRange.name, namedRange.range)
-    )
-}
-
-function getPositionsAndBalances(qt) {
-    qt.getPositions();
-    qt.getBalances('perCurrencyBalances');
-    qt.getBalances('combinedBalances');
-    Logger.log("Wrote balances/positions!");
-}
-
-function run() {
-    // Init QT session, read out positions and balances to sheet
-    try {
-        getPositionsAndBalances(new QuestradeApiSession());
-    }
-    catch (e) {
-        // Connection failed or bad token, prompt user for new token/password
-        console.log(e);
-    }
-};
 
 function onOpen(e) {
-    // Add a custom menu to the spreadsheet.
-    SpreadsheetApp.getUi() // Or DocumentApp, SlidesApp, or FormApp.
+    SpreadsheetApp.getUi()
         .createMenu('Questrade')
-        .addItem('Pull', 'run')
+        .addItem('Pull', 'updatePositions')
         .addToUi();
 }
-

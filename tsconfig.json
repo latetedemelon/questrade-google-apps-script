@@ -2,6 +2,7 @@
   "compilerOptions": {
       "allowJs": true,
       "checkJs": true,
-      "types": ["google-apps-script"]
+      "types": ["google-apps-script"],
+      "target": "ES2019"
     }
 }  
