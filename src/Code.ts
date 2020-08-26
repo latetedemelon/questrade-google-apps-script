@@ -86,7 +86,11 @@ const QuestradeApiSession = function () {
 
     const getEnrichedPositions = this.getEnrichedPositions = function() {
         const positions = getAccounts().flatMap(ac => {
-            const ac2 = prefixKeys(ac, 'account.');
+            const ac2 = {
+                accountNumber: ac.number,
+                accountType: ac.type
+            };
+
             const acPositions = getPositions(ac.number).map(pos => ({
                 ...pos, ...ac2
             }));
@@ -103,22 +107,27 @@ const QuestradeApiSession = function () {
             return acPositions;
         });
 
-        const rates = getExchangeRates('CAD');
-        const getValueInCAD = (value, currency) => value / rates[currency];
+        const cadRates = getExchangeRates('CAD');
+        const usdRates = getExchangeRates('USD');
 
         const symbols = [ ...getSymbols(positions.map(pos => pos.symbolId).filter(id => Number.isInteger(id))),
             { symbolId: '$CAD', currency: 'CAD' }, { symbolId: '$USD', currency: 'USD' } ];
 
         return positions.map(pos => {
             const symbol = symbols.find(s => s.symbolId == pos.symbolId);
-            const exchangeRate = 1.0 / rates[symbol.currency];
-            const valueInCAD = pos.currentMarketValue * exchangeRate;
+
+            const cadExchangeRate = 1.0 / cadRates[symbol.currency];
+            const valueInCAD = pos.currentMarketValue * cadExchangeRate;
+
+            const usdExchangeRate = 1.0 / usdRates[symbol.currency];
+            const valueInUSD = pos.currentMarketValue * usdExchangeRate;
+
             return { 
                 ...pos,
-                ...prefixKeys(symbol, 'symbol.'),
-                exchangeRate: exchangeRate,
+                currency: symbol.currency,
+                value: pos.currentMarketValue,
                 valueInCAD: valueInCAD,
-                currency: symbol.currency
+                valueInUSD: valueInUSD
             };
         });
     };
@@ -134,37 +143,36 @@ function updatePositions() {
     const values = sheet.getDataRange().getValues();
     var lastRowIndex = values.length;
 
-    const headerRow = values[0];
-    const numHeaderRows = 2; // header + totals
-    const columnMap = headerRow.reduce((map, val, index) => {
-        // @ts-ignore
-        map[val] = index;
+    const colIndexMap = doc.getNamedRanges()
+    .filter(r => r.getName().startsWith('Positions.'))
+    .reduce((map, namedRange) => {
+        map[namedRange.getName().replace('Positions.', '')] = namedRange.getRange().getColumn() - 1;
         return map;
     }, {});
 
-    const accountNumCol = columnMap['account.number'];
-    const symbolIdCol = columnMap['symbolId'];
+    const accountNumCol = colIndexMap['accountNumber'];
+    const symbolIdCol = colIndexMap['symbolId'];
     const updatedRowIndicies = new Set();
 
     positions.forEach(pos => {
-        var rowIndex = values.findIndex(row => row[accountNumCol] == pos['account.number'] && row[symbolIdCol] == pos.symbolId);
+        var rowIndex = values.findIndex(row => row[accountNumCol] == pos['accountNumber'] && row[symbolIdCol] == pos.symbolId);
         if (rowIndex < 0) {
             rowIndex = lastRowIndex ++;
         }
         updatedRowIndicies.add(rowIndex);
 
-        headerRow.forEach((key, colIndex) => {
-            // @ts-ignore
+        for (const [key, colIndex] of Object.entries(colIndexMap)) {
             const value = pos[key];
             if (value) {
-                sheet.getRange(rowIndex+1, colIndex+1).setValue(value);
+                //console.log(key + ' -> (' + (rowIndex+1) + ',' + (Number(colIndex)+1) + ') -> ' + value);
+                sheet.getRange(rowIndex+1, Number(colIndex)+1).setValue(value);
             }
-        });
+        };
     });
 
-    const expiredCol = columnMap['expired'];
+    const expiredCol = colIndexMap['expired'];
     values.forEach((row, rowIndex) => {
-        if (rowIndex >= numHeaderRows) {
+        if (rowIndex > 0) { // skip header row
             sheet.getRange(rowIndex+1, expiredCol+1).setValue(updatedRowIndicies.has(rowIndex) ? null : 'EXPIRED');
         }
     });
