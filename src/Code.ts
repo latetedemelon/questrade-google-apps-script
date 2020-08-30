@@ -125,7 +125,7 @@ const QuestradeApiSession = function () {
             });
 
             const orderMap = getOrders(ac.number)
-                .filter((order) => order.state == "Accepted")
+                .filter((order) => order.state == "Accepted" || order.state == "Queued")
                 .reduce((map, order) => {
                     var orders = map[order.symbolId];
                     if (!orders) {
