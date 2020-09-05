@@ -98,8 +98,10 @@ const QuestradeApiSession = function () {
 
     const getDuration = (order) => {
         switch (order.timeInForce) {
-            case "GoodTillCanceled": return "GTC";
-            default: return "?";
+            case "GoodTillCanceled":
+                return "GTC";
+            default:
+                return "?";
         }
     };
 
@@ -147,12 +149,17 @@ const QuestradeApiSession = function () {
 
                 if (orders.length == 1) {
                     const order = orders[0];
-                    if (order.side == 'Sell') {
+                    if (order.side == "Sell") {
                         switch (order.orderType) {
                             case "TrailStopLimitInPercentage":
                                 pos.sharesNotStopped = pos.openQuantity - order.totalQuantity;
                                 pos.stop = order.stopPrice + "%";
                                 pos.limit = order.limitPrice + (Boolean(order.isLimitOffsetInDollar) ? "" : "%");
+                                pos.duration = getDuration(order);
+                                break;
+                            case "TrailStopInPercentage":
+                                pos.sharesNotStopped = pos.openQuantity - order.totalQuantity;
+                                pos.stop = order.stopPrice + "%";
                                 pos.duration = getDuration(order);
                                 break;
                         }
@@ -213,29 +220,45 @@ function updatePositions() {
     const symbolIdCol = colIndexMap["symbolId"];
     const updatedRowIndicies = new Set();
 
-    positions.forEach((pos) => {
-        var rowIndex = values.findIndex(
-            (row) => row[accountNumCol] == pos["accountNumber"] && row[symbolIdCol] == pos.symbolId
-        );
-        if (rowIndex < 0) {
-            rowIndex = lastRowIndex++;
-        }
-        updatedRowIndicies.add(rowIndex);
-
-        for (const [key, colIndex] of Object.entries(colIndexMap)) {
-            const value = pos[key];
-            if (value) {
-                //console.log(key + ' -> (' + (rowIndex+1) + ',' + (Number(colIndex)+1) + ') -> ' + value);
-                sheet.getRange(rowIndex + 1, Number(colIndex) + 1).setValue(value);
+    positions
+        .filter((pos) => typeof pos.currentMarketValue == "number")
+        .forEach((pos) => {
+            var rowIndex = values.findIndex(
+                (row) => row[accountNumCol] == pos["accountNumber"] && row[symbolIdCol] == pos.symbolId
+            );
+            if (rowIndex < 0) {
+                rowIndex = lastRowIndex++;
             }
-        }
-    });
+            updatedRowIndicies.add(rowIndex);
+
+            for (const [key, colIndex] of Object.entries(colIndexMap)) {
+                const value = pos[key];
+                if (value !== undefined) {
+                    sheet.getRange(rowIndex + 1, Number(colIndex) + 1).setValue(value);
+                }
+            }
+        });
 
     const expiredCol = colIndexMap["expired"];
+    const expiredNullCols = [
+        "value",
+        "currentMarketPrice",
+        "valueInCAD",
+        "valueInUSD",
+        "stop",
+        "limit",
+        "sharesNotStopped",
+        "duration",
+    ].map((key) => colIndexMap[key]).filter(col => col !== undefined);
+
     values.forEach((row, rowIndex) => {
         if (rowIndex > 0) {
-            // skip header row
-            sheet.getRange(rowIndex + 1, expiredCol + 1).setValue(updatedRowIndicies.has(rowIndex) ? null : "EXPIRED");
+            if (updatedRowIndicies.has(rowIndex)) {
+                sheet.getRange(rowIndex + 1, expiredCol + 1).setValue(null);
+            } else {
+                sheet.getRange(rowIndex + 1, expiredCol + 1).setValue("EXPIRED");
+                expiredNullCols.forEach((colIndex) => sheet.getRange(rowIndex + 1, colIndex + 1).setValue(null));
+            }
         }
     });
 }
