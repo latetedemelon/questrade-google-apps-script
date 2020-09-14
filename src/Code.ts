@@ -39,7 +39,7 @@ const QuestradeApiSession = function () {
         const authorizationUrl = service.getAuthorizationUrl();
         const template: GoogleAppsScript.HTML.HtmlTemplate = HtmlService.createTemplate(
             '<a href="<?= authorizationUrl ?>" target="_blank">Authorize</a>. ' +
-                "Pull again when the authorization is complete."
+            "Pull again when the authorization is complete."
         );
         // @ts-ignore
         template.authorizationUrl = authorizationUrl;
@@ -239,7 +239,7 @@ function updatePositions() {
             }
         });
 
-    const expiredCol = colIndexMap["expired"];
+    const statusCol = colIndexMap["status"];
     const expiredNullCols = [
         "value",
         "currentMarketPrice",
@@ -249,14 +249,16 @@ function updatePositions() {
         "limit",
         "sharesNotStopped",
         "duration",
-    ].map((key) => colIndexMap[key]).filter(col => col !== undefined);
+    ]
+        .map((key) => colIndexMap[key])
+        .filter((col) => col !== undefined);
 
     values.forEach((row, rowIndex) => {
         if (rowIndex > 0) {
             if (updatedRowIndicies.has(rowIndex)) {
-                sheet.getRange(rowIndex + 1, expiredCol + 1).setValue(null);
+                sheet.getRange(rowIndex + 1, statusCol + 1).setValue(null);
             } else {
-                sheet.getRange(rowIndex + 1, expiredCol + 1).setValue("EXPIRED");
+                sheet.getRange(rowIndex + 1, statusCol + 1).setValue("🛑");
                 expiredNullCols.forEach((colIndex) => sheet.getRange(rowIndex + 1, colIndex + 1).setValue(null));
             }
         }
