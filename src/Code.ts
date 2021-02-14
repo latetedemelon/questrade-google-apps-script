@@ -78,8 +78,27 @@ const QuestradeApiSession = function () {
     });
 
     const getOrders = (this.getOrders = function (accountNumber) {
-        return fetch("v1/accounts/" + accountNumber + "/orders?startTime=1999-12-31T00:00:00.000000Z&stateFilter=Open")
-            .orders;
+        return fetch("v1/accounts/" + accountNumber + "/orders"
+            + "?startTime=1999-12-31T00:00:00.000000Z"
+            + "&stateFilter=Open&").orders;
+    });
+
+    const getCandles = (this.getCandles = function (symbolId, startTime) {
+        return fetch("v1/markets/candles/" + symbolId
+            + "?startTime=" + startTime
+            + "&endTime=2099-12-31T00:00:00.000000Z"
+            + "&interval=OneYear")
+            .candles;
+    });
+
+    const getHighSince = (this.getHighSince = function (symbolId, startTime) {
+        try {
+            var highs = getCandles(symbolId, startTime).map(c => c.high);
+            return Math.max(...highs);
+        } catch (err) {
+            console.log("Error pulling candles for symbolId " + symbolId, err);
+            return undefined;
+        }
     });
 
     const getExchangeRates = (base) => {
@@ -146,6 +165,7 @@ const QuestradeApiSession = function () {
                 pos.stop = null;
                 pos.limit = null;
                 pos.duration = null;
+                pos.high = null;
 
                 if (orders.length == 1) {
                     const order = orders[0];
@@ -156,11 +176,13 @@ const QuestradeApiSession = function () {
                                 pos.stop = order.stopPrice + "%";
                                 pos.limit = order.limitPrice + (Boolean(order.isLimitOffsetInDollar) ? "" : "%");
                                 pos.duration = getDuration(order);
+                                pos.high = getHighSince(order.symbolId, order.updateTime);
                                 break;
                             case "TrailStopInPercentage":
                                 pos.sharesNotStopped = pos.openQuantity - order.totalQuantity;
                                 pos.stop = order.stopPrice + "%";
                                 pos.duration = getDuration(order);
+                                pos.high = getHighSince(order.symbolId, order.updateTime);
                                 break;
                         }
                     }
@@ -218,13 +240,15 @@ function updatePositions() {
 
     const accountNumCol = colIndexMap["accountNumber"];
     const symbolIdCol = colIndexMap["symbolId"];
+    const symbolCol = colIndexMap["symbol"];
     const updatedRowIndicies = new Set();
 
     positions
         .filter((pos) => typeof pos.currentMarketValue == "number")
         .forEach((pos) => {
             var rowIndex = values.findIndex(
-                (row) => row[accountNumCol] == pos["accountNumber"] && row[symbolIdCol] == pos.symbolId
+                (row) => row[accountNumCol] == pos["accountNumber"] &&
+                    (row[symbolIdCol] == pos.symbolId || (!row[symbolIdCol] && row[symbolCol] == pos.symbol))
             );
             if (rowIndex < 0) {
                 rowIndex = lastRowIndex++;
@@ -249,6 +273,7 @@ function updatePositions() {
         "limit",
         "sharesNotStopped",
         "duration",
+        "high"
     ]
         .map((key) => colIndexMap[key])
         .filter((col) => col !== undefined);
@@ -265,6 +290,25 @@ function updatePositions() {
     });
 }
 
+function sortByNamedRange(name, ascending) {
+    const doc = SpreadsheetApp.getActiveSpreadsheet();
+    const range = doc.getRangeByName(name);
+    range.getSheet().sort(range.getColumn(), ascending);
+}
+
+function sortBySortId() {
+    sortByNamedRange("Positions.sortId", true);
+};
+
+function sortByRebalanceAmount() {
+    sortByNamedRange("Positions.rebalanceAmount", false);
+};
+
 function onOpen(e) {
-    SpreadsheetApp.getUi().createMenu("Questrade").addItem("Pull", "updatePositions").addToUi();
+    SpreadsheetApp.getUi()
+        .createMenu("STONKS!")
+        .addItem("Pull from Questrade", "updatePositions")
+        .addItem("Sort by Sort Id", "sortBySortId")
+        .addItem("Sort by Rebal $", "sortByRebalanceAmount")
+        .addToUi();
 }
