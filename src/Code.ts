@@ -38,14 +38,15 @@ const QuestradeApiSession = function () {
     if (!service.hasAccess()) {
         const authorizationUrl = service.getAuthorizationUrl();
         const template: GoogleAppsScript.HTML.HtmlTemplate = HtmlService.createTemplate(
-            '<a href="<?= authorizationUrl ?>" target="_blank">Authorize</a>. ' +
-            "Pull again when the authorization is complete."
+            '<a href="<?= authorizationUrl ?>" target="_blank">Authorize (ClientId: '
+            + PropertiesService.getScriptProperties().getProperty("consumerKey")
+            + ')</a>. Pull again when the authorization is complete.'
         );
         // @ts-ignore
         template.authorizationUrl = authorizationUrl;
         const page = template.evaluate();
         SpreadsheetApp.getUi().showSidebar(page);
-        return;
+        throw "No access!";
     }
 
     const apiOptions: GoogleAppsScript.URL_Fetch.URLFetchRequestOptions = {
@@ -310,5 +311,6 @@ function onOpen(e) {
         .addItem("Pull from Questrade", "updatePositions")
         .addItem("Sort by Sort Id", "sortBySortId")
         .addItem("Sort by Rebal $", "sortByRebalanceAmount")
+        .addItem("Reauthorize", "reset")
         .addToUi();
 }
